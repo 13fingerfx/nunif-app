@@ -16,21 +16,21 @@ extension AppLink {
     static let all: [AppLink] = [
         AppLink(
             title: "Website",
-            subtitle: "13fingerfx.com",              // TODO: confirm URL
-            urlString: "https://13fingerfx.com",
+            subtitle: "13fingerfx.com",
+            urlString: "https://www.13fingerfx.com",
             systemImage: "globe",
             tint: Brand.orange
         ),
         AppLink(
             title: "Shop",
             subtitle: "Products & kits",
-            urlString: "https://13fingerfx.com/shop", // TODO: confirm URL
+            urlString: "https://www.13fingerfx.com/shop", // TODO: confirm shop URL
             systemImage: "bag.fill",
             tint: Brand.orange
         ),
         AppLink(
             title: "Instagram",
-            subtitle: "@13fingerfx",                  // TODO: confirm handle
+            subtitle: "@13fingerfx",                      // TODO: confirm handle
             urlString: "https://instagram.com/13fingerfx",
             systemImage: "camera.fill",
             tint: Color(red: 0.83, green: 0.12, blue: 0.56)
