@@ -25,6 +25,7 @@ struct DeadenerCalculatorView: View {
             }
             .padding()
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Deadener Calculator")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -54,7 +55,7 @@ struct DeadenerCalculatorView: View {
                 field: .deadenerPercent
             )
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func inputRow(
@@ -87,9 +88,9 @@ struct DeadenerCalculatorView: View {
                 .font(.headline)
 
             VStack(spacing: 10) {
-                resultRow(label: "Part A", grams: calc.partA, color: .blue)
-                resultRow(label: "Part B", grams: calc.partB, color: .blue)
-                resultRow(label: "Deadener (D)", grams: calc.partD, color: .orange)
+                resultRow(label: "Part A", grams: calc.partA, color: .primary)
+                resultRow(label: "Part B", grams: calc.partB, color: .primary)
+                resultRow(label: "Deadener (D)", grams: calc.partD, color: Brand.orange)
             }
 
             Divider()
@@ -108,7 +109,7 @@ struct DeadenerCalculatorView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func resultRow(label: String, grams: Double, color: Color) -> some View {
