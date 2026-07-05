@@ -196,12 +196,14 @@ def cmd_fill(args):
     import trimesh
     from .core import fill
     from .core.project import guard_overwrite
-    guard_overwrite(args.output, args.mesh, args.mask)
+    guard_overwrite(args.output, args.mesh, args.mask, args.lock)
     mesh = _load_mesh(args.mesh)
     mask = np.load(args.mask)
+    locked = np.load(args.lock) if args.lock else None
     filled, effective = fill.fill_regions(
         mesh, mask, method=args.method, profile=args.profile,
-        fullness=args.fullness, taper=args.taper)
+        fullness=args.fullness, taper=args.taper, locked=locked,
+        feather_rings=args.feather)
     filled.export(args.output)
     shape = args.profile or "flat"
     print(f"saved {args.output}  re-shaped {int(effective.sum())} vertices "
@@ -436,6 +438,13 @@ def build_parser():
                         "(overrides the profile's value; slider-friendly)")
     p.add_argument("--taper", type=float, default=None,
                    help="dome shape: higher = flatter rim, rounder center")
+    p.add_argument("--lock", default=None,
+                   help="boolean mask .npy of protected vertices that "
+                        "can NEVER move, even if selected (make one "
+                        "with `select` on the area to protect)")
+    p.add_argument("--feather", type=int, default=0,
+                   help="transition band width in edge rings: "
+                        "displacement fades to zero at the region rim")
     p.add_argument("-o", "--output", required=True,
                    help="output mesh (.obj/.ply/.stl) -- inputs are "
                         "never overwritten")

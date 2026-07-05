@@ -62,9 +62,9 @@ PROFILES = {
 }
 
 
-def _boundary_distance(mask, adj):
-    """Normalized BFS depth (0 at the region rim, 1 at the deepest
-    interior vertex) for every masked vertex."""
+def _boundary_rings(mask, adj):
+    """Integer BFS depth (0 at the region rim) for masked vertices;
+    -1 outside the mask."""
     depth = np.full(len(mask), -1, dtype=np.int64)
     outside = ~mask
     touches_out = np.asarray(
@@ -79,6 +79,13 @@ def _boundary_distance(mask, adj):
         ring += 1
         depth[nxt] = ring
         frontier = nxt
+    return depth
+
+
+def _boundary_distance(mask, adj):
+    """Normalized BFS depth (0 at the region rim, 1 at the deepest
+    interior vertex) for every masked vertex."""
+    depth = _boundary_rings(mask, adj)
     deepest = depth[mask].max()
     norm = np.zeros(len(mask))
     if deepest > 0:
@@ -104,7 +111,7 @@ def shape_fill(mesh, mask, fullness, taper=1.0, adj=None):
 
 
 def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
-                 fullness=None, taper=None):
+                 fullness=None, taper=None, locked=None, feather_rings=0):
     """Re-shape masked vertices as a smooth continuation of the rest.
 
     method: "biharmonic" (slope-continuous, default) or "laplacian"
@@ -112,6 +119,13 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
     profile: optional preset name from PROFILES ("scalp"/"brow"/"beard");
     fullness/taper override the preset's values when given, so the same
     parameters double as interactive sliders.
+    locked: optional boolean vertex mask of protected geometry. Locked
+    vertices can NEVER move, even if the selection includes them --
+    they are subtracted from the fill region and act as boundary
+    constraints instead. Defense in depth against a sloppy outline.
+    feather_rings: width (in edge rings, from the region rim inward) of
+    a transition band where displacement fades to zero at the border,
+    anchoring the result to the original surface around the edge.
     Returns (new Trimesh, effective mask actually filled).
     """
     if method not in ("biharmonic", "laplacian"):
@@ -126,6 +140,15 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
     mask = np.asarray(vertex_mask, dtype=bool)
     if mask.shape != (len(mesh.vertices),):
         raise ValueError("mask length must equal the vertex count")
+    if locked is not None:
+        locked = np.asarray(locked, dtype=bool)
+        if locked.shape != mask.shape:
+            raise ValueError("locked mask length must equal vertex count")
+        overlap = int((mask & locked).sum())
+        if overlap:
+            print(f"lock: excluded {overlap} selected vertices inside "
+                  "the locked region")
+        mask = mask & ~locked
     adj = vertex_adjacency(mesh)
     mask, dropped = _drop_unconstrained(mask, adj)
     if dropped:
@@ -148,4 +171,13 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
     if preset["fullness"] != 0.0:
         filled = shape_fill(filled, mask, preset["fullness"],
                             preset["taper"], adj=adj)
+    if feather_rings > 0:
+        rings = _boundary_rings(mask, adj)
+        t = np.clip(rings / float(feather_rings), 0.0, 1.0)
+        w = t * t * (3.0 - 2.0 * t)
+        blend = np.array(filled.vertices, dtype=np.float64)
+        blend[mask] = (np.asarray(mesh.vertices)[mask] * (1 - w[mask, None])
+                       + blend[mask] * w[mask, None])
+        filled = trimesh.Trimesh(vertices=blend, faces=mesh.faces,
+                                 process=False)
     return filled, mask

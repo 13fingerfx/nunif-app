@@ -38,6 +38,36 @@ class TestFill(unittest.TestCase):
         rough_after = defects.roughness(filled)[cap].mean()
         self.assertLess(rough_after, 0.02)
 
+    def test_locked_vertices_never_move_even_when_selected(self):
+        mesh, _, cap = head_with_cap(spiky=True)
+        # Sloppy selection: grabs the cap AND a band of "face" below it.
+        sloppy = mesh.vertices[:, 2] > 10.0
+        locked = (mesh.vertices[:, 2] > 10.0) & (mesh.vertices[:, 2] < 25.0)
+        filled, effective = fill.fill_regions(mesh, sloppy, locked=locked)
+        # Locked band is bit-identical despite being inside the selection.
+        np.testing.assert_array_equal(filled.vertices[locked],
+                                      mesh.vertices[locked])
+        self.assertEqual((effective & locked).sum(), 0)
+        # The cap proper still got filled.
+        self.assertTrue(effective[mesh.vertices[:, 2] > 30.0].any())
+
+    def test_feather_anchors_the_rim(self):
+        mesh, _, cap = head_with_cap(spiky=True)
+        plain, _ = fill.fill_regions(mesh, cap)
+        feathered, _ = fill.fill_regions(mesh, cap, feather_rings=4)
+        adj = defects.vertex_adjacency(mesh)
+        rim = cap & (np.asarray(
+            adj @ (~cap).astype(float)).reshape(-1) > 0)
+        # At the rim, the feathered result equals the ORIGINAL surface.
+        np.testing.assert_allclose(feathered.vertices[rim],
+                                   mesh.vertices[rim], atol=1e-9)
+        # Deep interior is unaffected by the feather.
+        deep = cap & (np.linalg.norm(
+            mesh.vertices - [0, 0, 55], axis=1) < 18)
+        if deep.any():
+            np.testing.assert_allclose(feathered.vertices[deep],
+                                       plain.vertices[deep], atol=1e-9)
+
     def test_fully_masked_mesh_is_skipped(self):
         mesh = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
         mask = np.ones(len(mesh.vertices), dtype=bool)
