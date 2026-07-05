@@ -75,10 +75,18 @@ landmark correspondences (the Peachy-style draggable-dots model).
   photo at all (scratch characters) needs a local surface
   parameterization around the user's boundary curve — planned approach is
   a local conformal unwrap of the enclosed patch, but it is not in v1.
-- **4c (deferred)**: patch-based resynthesis (PatchMatch/Efros-Leung
-  family) so micro-texture fills a resized boundary instead of
-  stretching. v1 uses plain TPS warp; the API keeps the micro layer
-  separate so 4c slots in without breaking overlays already saved.
+- **4c — guided synthesis** *(implemented, `core/synthesis.py`)*:
+  the "if you see x data it translates to y texture" model — image
+  analogies (Hertzmann et al. 2001) / Efros-Freeman texture transfer.
+  The observed detail map is a guide channel: each target tile is
+  matched (plain SSD on the coarse band — deliberately not mean-
+  invariant, since local level is the regime signal) against an
+  exemplar, and only the exemplar's high band is transplanted, then
+  re-band-passed so the guide keeps sole authority over everything it
+  resolved. This is the principled midpoint between measurement and
+  moon-pasting: subject-specific structure decides placement, exemplars
+  contribute only sub-resolution frequencies. Also covers the "resized
+  overlay pore stretching" concern: resynthesize instead of stretch.
 
 ### Phase 5 — texture path (games/preview)
 UV texture projection + seam blending (vendor `mvs-texturing` or

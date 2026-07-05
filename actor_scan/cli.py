@@ -110,6 +110,22 @@ def cmd_bake(args):
           f"{covered:.1f}% received detail")
 
 
+def cmd_enhance(args):
+    from .core import synthesis
+    guide = np.load(args.height)
+    if args.exemplar.endswith(".npz"):
+        exemplar = np.load(args.exemplar)["height"]
+    else:
+        exemplar = np.load(args.exemplar)
+    enhanced, high = synthesis.guided_synthesis(
+        guide, exemplar, sigma_split=args.sigma, tile=args.tile,
+        overlap=args.overlap, tolerance=args.tolerance,
+        strength=args.strength, rng=np.random.default_rng(args.seed))
+    np.save(args.output, enhanced.astype(np.float32))
+    print(f"saved {args.output}  synthesized band std "
+          f"{high.std():.4f} (guide std {guide.std():.4f})")
+
+
 def cmd_overlay_extract(args):
     from .core import overlay
     height = np.load(args.height)
@@ -198,6 +214,22 @@ def build_parser():
     p.add_argument("-o", "--output", required=True,
                    help="output mesh (.stl/.obj/.ply)")
     p.set_defaults(func=cmd_bake)
+
+    p = sub.add_parser("enhance",
+                       help="guided synthesis: top up a soft detail map "
+                            "with exemplar-grade micro texture")
+    p.add_argument("height", help="observed detail height .npy (guide)")
+    p.add_argument("--exemplar", required=True,
+                   help="high-res exemplar height .npy or overlay .npz")
+    p.add_argument("--sigma", type=float, default=8.0,
+                   help="split between observed and synthesized bands (px)")
+    p.add_argument("--tile", type=int, default=32)
+    p.add_argument("--overlap", type=int, default=12)
+    p.add_argument("--tolerance", type=float, default=0.03)
+    p.add_argument("--strength", type=float, default=1.0)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("-o", "--output", required=True, help="output .npy")
+    p.set_defaults(func=cmd_enhance)
 
     p = sub.add_parser("overlay-extract", help="cut a shaped overlay")
     p.add_argument("height", help="detail height .npy")

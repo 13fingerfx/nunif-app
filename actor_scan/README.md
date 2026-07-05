@@ -26,9 +26,12 @@ Phases 0–4 (image-space half) implemented and tested:
 | `core/registration.py` | photo <-> scan pose from clicked correspondences (PnP, focal sweep) |
 | `core/bake.py` | subdivide -> project -> displace -> STL/OBJ/PLY (never through the UV atlas) |
 | `core/overlay.py` | shaped, feathered, landmark-tagged overlays; TPS landmark fitting |
+| `core/synthesis.py` | guided detail synthesis: exemplar micro-texture conditioned on observed data (image-analogies family) |
 
-Not yet built: patch-based micro-texture resynthesis (build_plan 4c),
-overlay-onto-bare-mesh (4b), UV color-texture path (5), GUI (6).
+Not yet built: overlay-onto-bare-mesh (build_plan 4b), UV color-texture
+path (5), GUI (6).
+
+First real capture: see [`docs/capture_guide.md`](docs/capture_guide.md).
 
 ## Install / test
 
