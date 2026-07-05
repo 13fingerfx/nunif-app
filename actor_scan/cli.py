@@ -196,18 +196,34 @@ def cmd_fill(args):
     import trimesh
     from .core import fill
     from .core.project import guard_overwrite
-    guard_overwrite(args.output, args.mesh, args.mask, args.lock)
+    guard_overwrite(args.output, args.mesh, args.mask, args.lock,
+                    args.template)
     mesh = _load_mesh(args.mesh)
     mask = np.load(args.mask)
     locked = np.load(args.lock) if args.lock else None
-    filled, effective = fill.fill_regions(
-        mesh, mask, method=args.method, profile=args.profile,
-        fullness=args.fullness, taper=args.taper, locked=locked,
-        feather_rings=args.feather)
+    if args.template:
+        from .core import template as T
+        tmpl = _load_mesh(args.template)
+        if args.template_landmarks:
+            with open(args.template_landmarks) as f:
+                marks = json.load(f)
+            tmpl, _, rms = T.align_template(tmpl, marks["template"],
+                                            marks["scan"])
+            print(f"tethered template: landmark rms {rms:.2f} mesh units")
+        filled, effective = T.template_fill(
+            mesh, mask, tmpl, adherence=args.adherence,
+            feather_rings=args.feather or 4, locked=locked,
+            fullness=args.fullness or 0.0, taper=args.taper or 1.0)
+        shape = "template"
+    else:
+        filled, effective = fill.fill_regions(
+            mesh, mask, method=args.method, profile=args.profile,
+            fullness=args.fullness, taper=args.taper, locked=locked,
+            feather_rings=args.feather)
+        shape = args.profile or "flat"
     filled.export(args.output)
-    shape = args.profile or "flat"
     print(f"saved {args.output}  re-shaped {int(effective.sum())} vertices "
-          f"({args.method}, profile {shape})")
+          f"({shape})")
 
 
 def cmd_select(args):
@@ -444,7 +460,20 @@ def build_parser():
                         "with `select` on the area to protect)")
     p.add_argument("--feather", type=int, default=0,
                    help="transition band width in edge rings: "
-                        "displacement fades to zero at the region rim")
+                        "displacement fades to zero at the region rim "
+                        "(template mode defaults to 4)")
+    p.add_argument("--template", default=None,
+                   help="generic head mesh supplying the shape prior "
+                        "inside the region (fixes the biharmonic "
+                        "conehead on full-cranium fills)")
+    p.add_argument("--template-landmarks", default=None,
+                   help='json {"template": {name: [x,y,z]}, "scan": '
+                        '{name: [x,y,z]}} tethering the generic to the '
+                        "scan (similarity: scale+rotate+move, never "
+                        "distorts proportions); omit if pre-aligned")
+    p.add_argument("--adherence", type=float, default=1.0,
+                   help="follow-the-template slider: 0 = ignore, "
+                        "~1 balanced, higher hugs the generic")
     p.add_argument("-o", "--output", required=True,
                    help="output mesh (.obj/.ply/.stl) -- inputs are "
                         "never overwritten")

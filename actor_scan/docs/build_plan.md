@@ -172,6 +172,35 @@ Findings, in order of importance:
    product decision that manual outlining is the primary path;
    `mark` stays an assist at best.
 
+### Phase 2.7 — template-head fill  *(implemented, first version)*
+`core/template.py`, validated on scan 049 with the user's average
+male/female generic heads (identical 12,466-vertex topology — the
+MakeHuman-style paradigm, so zones/overlays defined on one transfer to
+the other for free).
+
+Flow, matching the user's spec: the generic is invisibly **tethered**
+to the scan by a similarity transform from matched landmarks (Umeyama:
+rotation + translation + uniform scale only — alignment can never
+distort the scan or the generic's proportions); the user's outline
+selects the replacement region; the equivalent area of the generic
+supplies per-vertex target positions (dense surface sampling +
+KD-tree); a **screened biharmonic** solve drops that shape in —
+`adherence` weighs template-following against smoothness (0 = plain
+biharmonic), and the feather band zeroes template influence at the rim
+so the drop-in stays glued to the scan at the boundary. Locks are
+honored identically to plain fill. Sliders (adherence, fullness,
+taper) + the measurement chart are the "character creator" controls.
+
+Real-scan result: the same cranium outline that biharmonic turned into
+a conehead becomes an actual skull (rounded occiput, correct crown
+height) with the female generic at adherence 2.0 — 4.7 s solve, auto-
+tether at x105 scale with 1.16 cm landmark rms from crude auto-picked
+features (user-placed landmarks will beat that).
+
+Still open in this phase: commit-step remeshing into master topology,
+color-coded hair regions on the generics (user may supply), per-axis
+width/depth sliders, and landmark auto-suggestion.
+
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
 each vertex through the solved camera → sample the detail height map →
