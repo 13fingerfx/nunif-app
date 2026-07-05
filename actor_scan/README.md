@@ -1,21 +1,74 @@
-# actor_scan (planning stage)
+# actor_scan
 
-Goal: a standalone tool that takes an actor's 3D scan (mesh + UVs, treated as
-the dimensional ground truth) plus a set of HD reference photos of the same
-actor, and:
+Detail-enhancement pipeline for 3D scans: take a mid-range scan (the
+dimensional authority) plus HD photos of the same subject, recover
+pore/wrinkle-scale surface detail from the photos, and bake it into the
+mesh as real geometry for 3D printing or mould-making. Detail regions can
+be saved as shaped, landmark-tagged overlays and refitted onto other
+scans later.
 
-1. Builds a much higher-resolution color texture for the scan from the photos.
-2. Extrapolates fine surface detail (pores, fine wrinkles, lip texture, etc.)
-   from the photos and bakes it into the mesh as real topology/displacement,
-   not just a texture trick.
-3. Saves detail as reusable, region-tagged overlays (L cheek, R cheek, throat,
-   under-chin, under-L-eye, under-R-eye, ...) that can later be applied to
-   other scans or from-scratch characters when no photos are available.
+Docs:
+- [`docs/research.md`](docs/research.md) — stage-1 survey: existing
+  tools, techniques, licensing, platform choice, product framing.
+- [`docs/build_plan.md`](docs/build_plan.md) — step-by-step build plan
+  and the logical-flaw interrogation that shaped it.
 
-This directory currently contains only the stage-1 research pass. No code has
-been written yet.
+## Status
 
-See [`docs/research.md`](docs/research.md) for the full write-up: what exists
-already (open source and commercial), what's missing and would need custom
-work, how this maps onto tooling already in this repo (`waifu2x`, `iw3`,
-`dino`), and a platform recommendation (Mac vs PC).
+Phases 0–4 (image-space half) implemented and tested:
+
+| Module | Purpose |
+|---|---|
+| `core/lightcal.py` | chrome-ball light calibration (per session without the rig, once ever with it) |
+| `core/photometric.py` | photometric stereo: >=3 fixed-camera shots under known lights -> normals + albedo |
+| `core/freqsep.py` | single-photo fallback: frequency-separation pseudo-height |
+| `core/integrate.py` | normals -> height (mirror-padded Frankot-Chellappa) + detail band-pass |
+| `core/registration.py` | photo <-> scan pose from clicked correspondences (PnP, focal sweep) |
+| `core/bake.py` | subdivide -> project -> displace -> STL/OBJ/PLY (never through the UV atlas) |
+| `core/overlay.py` | shaped, feathered, landmark-tagged overlays; TPS landmark fitting |
+
+Not yet built: patch-based micro-texture resynthesis (build_plan 4c),
+overlay-onto-bare-mesh (4b), UV color-texture path (5), GUI (6).
+
+## Install / test
+
+```
+pip install -r actor_scan/requirements.txt
+python -m unittest discover -s actor_scan/tests
+```
+
+## Pipeline (CLI)
+
+```bash
+# 1. calibrate lights from chrome-ball shots (skip if using a rig profile)
+python -m actor_scan light-calibrate ball0.jpg ball1.jpg ball2.jpg \
+    --circle 640 400 220 -o lights.json
+
+# 2. solve normals from the same-lights captures of the subject
+python -m actor_scan normals shot0.jpg shot1.jpg shot2.jpg \
+    --lights lights.json -o ps.npz
+
+# 3. integrate + band-pass into a detail height map
+python -m actor_scan detail ps.npz --sigma 40 -o height.npy
+#    (or, single ordinary photo, lower fidelity:)
+python -m actor_scan detail --photo face.jpg --sigma 8 -o height.npy
+
+# 4. register the photo camera against the scan (clicked correspondences)
+python -m actor_scan register scan.obj corres.json \
+    --image-size 6000 4000 -o pose.json
+
+# 5. bake detail into geometry and export for printing
+python -m actor_scan bake scan.obj --view pose.json height.npy \
+    --scale 0.15 --max-edge 0.4 -o out.stl
+
+# overlays: cut a shaped region, refit it elsewhere via landmarks
+python -m actor_scan overlay-extract height.npy region.json -o l_cheek.aso.npz
+python -m actor_scan overlay-apply other_height.npy l_cheek.aso.npz \
+    marks.json -o merged.npy
+```
+
+`--scale` is the explicit estimation knob: photometric detail has
+physically unknowable amplitude, so depth is set in mesh units (mm for
+most scanners). The band-pass (`--sigma`) guarantees photo-derived data
+only ever adds detail the scanner couldn't capture — the scan's macro
+shape is never altered.
