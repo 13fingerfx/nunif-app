@@ -277,7 +277,15 @@ Because not every user will own the rig, the software should also document a
 "no rig" capture recipe (any 3 lights + any camera + a tripod, subject and
 camera held still) so the tool has standalone value, and the rig becomes a
 paid convenience upsell rather than a hard requirement — the same shape as
-OBS being free while capture-card hardware is sold around it.
+OBS being free while capture-card hardware is sold around it. The tradeoff
+has to be stated plainly, though: without the rig, light positions are
+unknown and different every session, so the "no rig" path still needs a
+chrome-ball (or equivalent glossy-sphere) reference shot *every time* to
+re-solve the light vectors before the photometric-stereo solve will work.
+The rig's whole value is turning that per-session calibration step into a
+one-off, at build time — it isn't just a convenience, it's what makes the
+capture fast and repeatable enough for a non-technical user to run
+unsupervised.
 
 ### 11.3 Overlay fitting, revised: landmark-driven warp + patch-based synthesis
 
