@@ -3,6 +3,9 @@
 Status: stage 1 (survey only, no implementation). Goal of this document is to
 answer three questions: what already exists, what we'd have to build
 ourselves, and whether this should be a Mac or PC (or cross-platform) tool.
+§11 adds a second planning pass covering the capture rig, the overlay-fitting
+design, a fidelity/provenance model, and what it'd take for this to become
+the standard tool in this space rather than a personal one.
 
 ## 1. The pipeline, broken into stages
 
@@ -101,9 +104,11 @@ off-the-shelf does this well from ordinary single photos:
 - What real digital-double studios actually do instead of solving this from
   a single photo: **photometric stereo / multi-flash Lightstage-style
   capture** (multiple lights, one camera position, per-pixel normals from
-  shading differences) — not applicable here since you only have ordinary
-  HD photos, not a multi-light rig.
-- **The practical, buildable substitute**: classic *frequency separation* —
+  shading differences). Originally scoped out here as "needs a multi-light
+  rig you don't have" — but a small dedicated capture rig turns this from
+  "not applicable" into the primary method; see §11.2.
+- **The practical, buildable substitute if no multi-light capture is used**:
+  classic *frequency separation* —
   high-pass-filter the luminance channel of the HD photo to isolate
   pore/wrinkle-scale micro-contrast, convert that high-frequency layer into a
   tangent-space normal/displacement map. This is the same trick
@@ -226,3 +231,135 @@ That validates the full pipeline shape end-to-end with the least engineering
 investment, and tells us how much the ML-based detail stages (DECA/HRN) would
 actually add over the classical approach before committing to their license
 constraints.
+
+## 11. Second planning pass — product scope, capture rig, overlay design
+
+This section captures a follow-up round of discussion after the initial
+survey above, driven by a concrete real pipeline (scan with a Revopoint
+MIRACO-class device → punch up the texture/detail → 3D print or mould-and-
+cast) and a goal of this becoming the standard tool for this niche, not a
+one-off personal tool.
+
+### 11.1 Product framing: scanner-agnostic, and a real price gap to bridge
+
+The tool should assume the user already owns a scanner and never integrate
+against scanner hardware directly — it should ingest whatever mesh/UV/texture
+a scanner already exports (OBJ/PLY/glTF/FBX cover essentially everything from
+Revo Scan, Artec Studio, Polycam, Metashape, RealityCapture, Meshroom). This
+also happens to be the easiest scope to build: it's a format-parsing problem,
+not a hardware-integration one.
+
+The market gap being targeted is real and worth naming explicitly: consumer/
+prosumer structured-light scanners (Revopoint MIRACO-class, roughly
+£1.5–2k) are good enough for games/previz but not for 3D printing at
+close-up scrutiny, while the next tier up (Artec Spider-class) is an order
+of magnitude more expensive (£20–30k+). A tool that lets a £1.5–2k scan
+approach £20–30k-scanner fidelity via a software + cheap-rig post-process is
+a credible wedge product, including for buyers who'd otherwise be customers
+of the expensive tier.
+
+### 11.2 A purpose-built capture rig: this is an RTI dome
+
+A rig with lights at fixed positions and a camera/phone mount in the middle
+is, functionally, a **Reflectance Transformation Imaging (RTI) dome** — the
+established technique museums and heritage-documentation labs use to capture
+surface micro-detail (coins, carvings, manuscripts) via multiple fixed
+lighting angles. That's directly useful prior art to search when this gets
+built, and it validates the specific detail the user raised: because the
+rig's light/camera geometry is fixed and known, the light vectors are
+calibrated **once**, at build time — not per capture — which is exactly what
+removes the need for a chrome-ball reference shot per session. A practical
+minimum is 3 fixed lights (e.g. left/right/top) plus one no-flash/ambient
+shot for clean albedo, feeding a per-pixel least-squares photometric-stereo
+solve for normals (Lambertian assumption).
+
+Because not every user will own the rig, the software should also document a
+"no rig" capture recipe (any 3 lights + any camera + a tripod, subject and
+camera held still) so the tool has standalone value, and the rig becomes a
+paid convenience upsell rather than a hard requirement — the same shape as
+OBS being free while capture-card hardware is sold around it.
+
+### 11.3 Overlay fitting, revised: landmark-driven warp + patch-based synthesis
+
+The boundary-editing tool described (a spline glued to a curved surface,
+graduating into a warp that "morphs" a texture patch to fit) is the same
+underlying technique as landmark-driven face-filter apps (Peachy/Snapchat/
+TikTok-style makeup or AR filter fitting): a handful of correspondence points
+(e.g. eye corner, pupil center) drive a smooth interpolated warp — a
+thin-plate-spline (TPS) or RBF warp, computable with `scipy`. That confirms
+the design in §5/§4: TPS warp for the *placement/shape* of a patch.
+
+The distortion risk raised (stretching individual pore shapes when the warp
+resizes a patch non-uniformly) is real, and the fix is a named, established
+technique: **patch-based texture synthesis** (the family behind Photoshop's
+Content-Aware Fill / PatchMatch, and the older Efros-Leung algorithm).
+Instead of geometrically stretching pixels to fit a new boundary, stitch
+together small real patches (from the source photo, or the exemplar library
+in §11.4) to fill whatever irregular area the boundary encloses, preserving
+true pore shape/size regardless of target area. This is the same family of
+idea as the user's own "contextual fill" description and needs no ML model —
+classical, well-understood, and its provenance (every pixel traces back to a
+real captured patch) is auditable, which matters for §11.5's "trust" point.
+
+### 11.4 A three-tier fidelity model (resolves the "idealized pore library" question)
+
+The idea of keeping a bank of very-high-resolution, generic pore/wrinkle/
+fold exemplars to extrapolate beyond what a given photo actually resolved is
+sound and not novel — it's the same thing texturing.xyz already sells
+commercially (see §5), used in production specifically because photographs
+alone often don't resolve true pore-level detail. The one thing worth being
+careful about is the analogy the user raised themselves: phone cameras that
+detect "this is the moon" and substitute a stored high-detail image rather
+than what the sensor actually resolved were controversial precisely because
+they fabricated specific detail and presented it as observed. For a tool
+whose purpose is capturing a specific real person's/object's likeness, that
+move is fine in some places and not others. A frequency-based split gives a
+principled line, and lines up with the pipeline already described elsewhere
+in this doc:
+
+- **Macro (the scan geometry itself)** — ground truth, the dimensional
+  authority, never touched by synthesis.
+- **Mid-frequency (specific wrinkle folds, moles, scars, structural
+  asymmetry)** — this is what makes the result recognizably *that*
+  person/object. Must always be derived from their own real photos (ideally
+  via the photometric-stereo capture in §11.2), even if the estimate is
+  rough. Never backfilled from a generic exemplar bank.
+- **Micro-frequency (individual pore shape/density/skin grain)** —
+  statistically generic across similar skin types/regions; nobody can tell a
+  specific pore apart from a plausible one. This is the layer where an
+  exemplar library and patch-based synthesis (§11.3) legitimately "top up"
+  resolution the source photo didn't capture.
+
+### 11.5 What it would take to become the standard tool, not a niche one
+
+- **Interoperability as the moat**: universal import (see §11.1) and export
+  to every common destination (STL for print/mould, glTF/FBX/USD for games,
+  a ZBrush GoZ bridge, native Blender) — being the hub between "any scanner"
+  and "any downstream tool" is what makes a tool default rather than niche.
+- **Lower the skill floor**: auto-place boundary/anchor points with an
+  existing open-source face-landmark model (MediaPipe FaceMesh, dlib,
+  InsightFace) instead of requiring manual placement, with manual drag-to-
+  correct as the fallback; pair with a guided step-by-step capture mode for
+  the rig in §11.2 so users don't need to understand photometric stereo to
+  use it.
+- **Two-sided overlay marketplace**: let users capture and publish their own
+  region-tagged detail packs (the same shape as Blender Market or
+  texturing.xyz itself). Publish the pack format as an open spec (like
+  glTF/USD) so nobody has to gatekeep who can produce compatible content —
+  this is a much stronger growth engine than any single feature.
+- **Generalize past faces**: statue/bust reproduction, creature/prop
+  sculpting, museum replicas, and prosthetics are larger adjacent markets
+  than digital-double VFX, and the region-tag design (user-defined tags, not
+  a hardcoded face map) already supports this — worth protecting that
+  generality rather than hardcoding face-specific assumptions later.
+- **Make provenance visible**: expose the macro/mid/micro split from §11.4
+  as a confidence/provenance heatmap in the UI (captured vs. estimated vs.
+  synthesized). Differentiates for professional/semi-professional users
+  (museum, forensic, prop-authentication contexts) who need to audit what's
+  real, and it's nearly free once the tiering already exists internally.
+- **Avoid the licensing trap**: keep any DECA/HRN-style learned component
+  optional and swappable, not load-bearing, given their typical
+  non-commercial research licenses (see §9) — lean on the classical
+  photometric-stereo + patch-synthesis pipeline as the core specifically
+  because it carries no such restriction and is compatible with "tool
+  everyone can use commercially."
