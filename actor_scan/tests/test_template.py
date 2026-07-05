@@ -41,6 +41,26 @@ class TestSimilarity(unittest.TestCase):
         radii = np.linalg.norm(aligned.vertices - [5, 6, 7], axis=1)
         np.testing.assert_allclose(radii, 50.0, atol=1e-6)
 
+    def test_refine_alignment_converges(self):
+        """A mis-tethered sphere template snaps onto the trusted scan
+        surface (scale + pose recovered by trimmed similarity-ICP)."""
+        scan = trimesh.creation.icosphere(subdivisions=4, radius=50.0)
+        tmpl = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+        # Bad initial tether: 10% scale error, 2-unit offset.
+        tmpl.apply_scale(55.0)
+        tmpl.apply_translation([2.0, -1.5, 1.0])
+        trusted = scan.vertices[scan.vertices[:, 2] < 20.0]  # "face"
+        aligned, matrix, rms = template.refine_alignment(
+            tmpl, trusted, iterations=15, allow_scale=True)
+        radii = np.linalg.norm(aligned.vertices, axis=1)
+        self.assertLess(abs(radii.mean() - 50.0), 0.5)
+        self.assertLess(np.abs(aligned.vertices.mean(axis=0)).max(), 0.5)
+
+    def test_refine_needs_points(self):
+        tmpl = trimesh.creation.icosphere(subdivisions=1)
+        with self.assertRaises(ValueError):
+            template.refine_alignment(tmpl, np.zeros((5, 3)))
+
     def test_too_few_landmarks(self):
         sphere = trimesh.creation.icosphere(subdivisions=1)
         with self.assertRaises(ValueError):

@@ -24,12 +24,12 @@ import trimesh
 
 from .defects import vertex_adjacency
 from .fill import (graph_laplacian, _drop_unconstrained, _boundary_rings,
-                   shape_fill)
+                   shape_fill, delete_vertex_faces)
 
 
-def similarity_transform(src, dst):
-    """Umeyama: 4x4 similarity (rotation + translation + uniform scale)
-    mapping src points onto dst points, least squares."""
+def similarity_transform(src, dst, with_scale=True):
+    """Umeyama: 4x4 transform (rotation + translation, and uniform
+    scale unless with_scale=False) mapping src onto dst, least squares."""
     src = np.asarray(src, dtype=np.float64)
     dst = np.asarray(dst, dtype=np.float64)
     if src.shape != dst.shape or len(src) < 3:
@@ -41,8 +41,11 @@ def similarity_transform(src, dst):
     sign = np.sign(np.linalg.det(u @ vt))
     d = np.diag([1.0, 1.0, sign])
     rotation = u @ d @ vt
-    var_s = (xs ** 2).sum() / len(src)
-    scale = float(np.trace(np.diag(s) @ d) / var_s)
+    if with_scale:
+        var_s = (xs ** 2).sum() / len(src)
+        scale = float(np.trace(np.diag(s) @ d) / var_s)
+    else:
+        scale = 1.0
     translation = mu_d - scale * rotation @ mu_s
     matrix = np.eye(4)
     matrix[:3, :3] = scale * rotation
@@ -67,6 +70,48 @@ def align_template(template, template_landmarks, scan_landmarks):
     return aligned, matrix, rms
 
 
+def refine_alignment(template, trusted_points, iterations=12,
+                     samples=20000, trim_percentile=60.0,
+                     allow_scale=False, seed=0):
+    """Tighten the tether: trimmed ICP of the template against TRUSTED
+    scan geometry (the regions the user is keeping -- face, ears,
+    neck), so alignment is never influenced by the hair/junk being
+    replaced. Landmarks give the coarse tether; this removes residual
+    pose error that shows up as steps where the template meets locked
+    geometry.
+
+    RIGID by default (rotation + translation only): scale is the
+    landmarks'/measurement chart's job, and letting partial-overlap
+    ICP re-estimate scale invites collapse onto the trusted patch
+    (observed on real data: a x0.6 shrink). allow_scale=True only for
+    well-overlapping, clean geometry.
+    Returns (aligned copy, 4x4 transform, final rms)."""
+    trusted = np.asarray(trusted_points, dtype=np.float64)
+    if len(trusted) < 100:
+        raise ValueError("need at least 100 trusted scan points")
+    tree = cKDTree(trusted)
+    src0, _ = trimesh.sample.sample_surface(template, samples, seed=seed)
+    src0 = np.asarray(src0)
+    matrix = np.eye(4)
+    src = src0.copy()
+    rms = np.inf
+    for _ in range(iterations):
+        dist, idx = tree.query(src)
+        # Trim distant pairs so template regions with no trusted
+        # counterpart (e.g. its scalp vs the scan's replaced scalp)
+        # don't drag the fit toward the trusted patch's rim.
+        keep = dist <= np.percentile(dist, trim_percentile)
+        step = similarity_transform(src[keep], trusted[idx[keep]],
+                                    with_scale=allow_scale)
+        matrix = step @ matrix
+        src = (np.hstack([src0, np.ones((len(src0), 1))])
+               @ matrix.T)[:, :3]
+        rms = float(np.sqrt((dist[keep] ** 2).mean()))
+    aligned = template.copy()
+    aligned.apply_transform(matrix)
+    return aligned, matrix, rms
+
+
 def template_targets(points, template, samples=400000, seed=0):
     """Nearest template-surface point for each query point (dense
     surface sampling + KD-tree; fast and accurate to sampling density)."""
@@ -79,7 +124,7 @@ def template_targets(points, template, samples=400000, seed=0):
 
 def template_fill(mesh, vertex_mask, template, adherence=1.0,
                   feather_rings=4, locked=None, fullness=0.0, taper=1.0,
-                  samples=400000):
+                  samples=400000, delete_stranded=False):
     """Replace a region with the template's shape, tethered at the rim.
 
     template must already be aligned into the scan's space (use
@@ -102,11 +147,16 @@ def template_fill(mesh, vertex_mask, template, adherence=1.0,
                   "the locked region")
         mask = mask & ~locked
     adj = vertex_adjacency(mesh)
-    mask, dropped = _drop_unconstrained(mask, adj)
-    if dropped:
-        print(f"warning: skipped {dropped} fully-masked component(s)")
+    mask, stranded = _drop_unconstrained(mask, adj)
+    if stranded.any():
+        verb = ("deleting" if delete_stranded else
+                "leaving untouched (delete_stranded=True removes)")
+        print(f"{int(stranded.sum())} stranded vertices: {verb}")
     if not mask.any():
-        return mesh.copy(), mask
+        out = mesh.copy()
+        if delete_stranded and stranded.any():
+            out = delete_vertex_faces(out, stranded)
+        return out, mask
 
     lap = graph_laplacian(mesh).tocsr()
     op = (lap @ lap).tocsr()
@@ -135,4 +185,6 @@ def template_fill(mesh, vertex_mask, template, adherence=1.0,
                              process=False)
     if fullness != 0.0:
         filled = shape_fill(filled, mask, fullness, taper, adj=adj)
+    if delete_stranded and stranded.any():
+        filled = delete_vertex_faces(filled, stranded)
     return filled, mask

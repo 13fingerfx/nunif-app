@@ -68,6 +68,24 @@ class TestFill(unittest.TestCase):
             np.testing.assert_allclose(feathered.vertices[deep],
                                        plain.vertices[deep], atol=1e-9)
 
+    def test_delete_stranded_removes_floating_junk(self):
+        main, _, cap = head_with_cap(spiky=True)
+        junk = trimesh.creation.icosphere(subdivisions=1, radius=3.0)
+        junk.apply_translation([0.0, 0.0, 70.0])
+        both = trimesh.util.concatenate([main, junk])
+        is_junk = np.linalg.norm(both.vertices - [0, 0, 70], axis=1) < 3.5
+        sel = np.concatenate([cap, np.ones(len(junk.vertices), bool)])
+        filled, eff = fill.fill_regions(both, sel, delete_stranded=True)
+        # Junk faces gone, vertex indexing intact, cap still filled.
+        self.assertEqual(len(filled.faces),
+                         len(both.faces) - len(junk.faces))
+        self.assertEqual(len(filled.vertices), len(both.vertices))
+        self.assertFalse(is_junk[both.faces[0]].any())
+        self.assertTrue(eff[:len(cap)].any())
+        # Without the flag, junk survives untouched.
+        kept, _ = fill.fill_regions(both, sel, delete_stranded=False)
+        self.assertEqual(len(kept.faces), len(both.faces))
+
     def test_fully_masked_mesh_is_skipped(self):
         mesh = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
         mask = np.ones(len(mesh.vertices), dtype=bool)

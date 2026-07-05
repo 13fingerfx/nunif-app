@@ -32,14 +32,14 @@ def graph_laplacian(mesh):
 
 def _drop_unconstrained(mask, adj):
     """Unmask free components with no fixed neighbor (nothing to anchor
-    the solve); returns (mask, number of dropped components)."""
+    the solve); returns (mask, stranded-vertex mask)."""
     idx = np.flatnonzero(mask)
+    stranded = np.zeros_like(mask)
     if len(idx) == 0:
-        return mask, 0
+        return mask, stranded
     sub = adj[idx][:, idx]
     n_comp, labels = connected_components(sub, directed=False)
     fixed = ~mask
-    dropped = 0
     out = mask.copy()
     for comp in range(n_comp):
         members = idx[labels == comp]
@@ -47,8 +47,17 @@ def _drop_unconstrained(mask, adj):
             adj[members][:, fixed].sum()) if fixed.any() else 0
         if touches == 0:
             out[members] = False
-            dropped += 1
-    return out, dropped
+            stranded[members] = True
+    return out, stranded
+
+
+def delete_vertex_faces(mesh, vertex_mask):
+    """Remove every face touching a masked vertex. Vertex array (and
+    therefore any other per-vertex mask) keeps its indexing; orphaned
+    vertices are simply left unreferenced."""
+    doomed = np.asarray(vertex_mask, dtype=bool)[mesh.faces].any(axis=1)
+    return trimesh.Trimesh(vertices=mesh.vertices.copy(),
+                           faces=mesh.faces[~doomed], process=False)
 
 
 # Per-zone shaping presets: fullness is the outward offset (mesh units,
@@ -111,7 +120,8 @@ def shape_fill(mesh, mask, fullness, taper=1.0, adj=None):
 
 
 def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
-                 fullness=None, taper=None, locked=None, feather_rings=0):
+                 fullness=None, taper=None, locked=None, feather_rings=0,
+                 delete_stranded=False):
     """Re-shape masked vertices as a smooth continuation of the rest.
 
     method: "biharmonic" (slope-continuous, default) or "laplacian"
@@ -126,6 +136,10 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
     feather_rings: width (in edge rings, from the region rim inward) of
     a transition band where displacement fades to zero at the border,
     anchoring the result to the original surface around the edge.
+    delete_stranded: selected components with no anchor to kept
+    geometry (floating scan junk -- detached hair shells and debris)
+    cannot be re-shaped; True removes their faces instead of leaving
+    them frozen in place.
     Returns (new Trimesh, effective mask actually filled).
     """
     if method not in ("biharmonic", "laplacian"):
@@ -150,12 +164,20 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
                   "the locked region")
         mask = mask & ~locked
     adj = vertex_adjacency(mesh)
-    mask, dropped = _drop_unconstrained(mask, adj)
-    if dropped:
-        print(f"warning: skipped {dropped} fully-masked component(s) "
-              "with no anchor vertices")
+    mask, stranded = _drop_unconstrained(mask, adj)
+    if stranded.any():
+        if delete_stranded:
+            print(f"deleting {int(stranded.sum())} stranded vertices "
+                  "(floating junk with no anchor)")
+        else:
+            print(f"warning: {int(stranded.sum())} selected vertices in "
+                  "unanchored component(s) left untouched "
+                  "(delete_stranded=True removes them)")
     if not mask.any():
-        return mesh.copy(), mask
+        out = mesh.copy()
+        if delete_stranded and stranded.any():
+            out = delete_vertex_faces(out, stranded)
+        return out, mask
 
     lap = graph_laplacian(mesh).tocsr()
     op = (lap @ lap).tocsr() if method == "biharmonic" else lap
@@ -180,4 +202,6 @@ def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
                        + blend[mask] * w[mask, None])
         filled = trimesh.Trimesh(vertices=blend, faces=mesh.faces,
                                  process=False)
+    if delete_stranded and stranded.any():
+        filled = delete_vertex_faces(filled, stranded)
     return filled, mask

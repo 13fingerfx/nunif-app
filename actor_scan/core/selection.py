@@ -9,8 +9,11 @@ tools use, expressed in CLI terms until the GUI exists.
 """
 import numpy as np
 import cv2
+from scipy.spatial import cKDTree
+from scipy.sparse.csgraph import connected_components
 
 from .bake import vertex_weights
+from .defects import vertex_adjacency
 
 
 def polygon_to_mask(mesh, pose, polygon, min_cos=0.05, occlusion=True,
@@ -33,9 +36,70 @@ def polygon_to_mask(mesh, pose, polygon, min_cos=0.05, occlusion=True,
     inside = raster[py, px].astype(bool)
     mask = inside & (weight > 0)
     if grow_rings > 0:
-        from .defects import vertex_adjacency
         adj = vertex_adjacency(mesh)
         for _ in range(grow_rings):
             mask = mask | (np.asarray(
                 adj @ mask.astype(np.float64)).reshape(-1) > 0)
     return mask
+
+
+def mirror_mask(mesh, mask, axis=0, radius=None):
+    """Extend a selection to its mirror image across the given axis --
+    hair, beards and brows are roughly symmetric, and an outline drawn
+    from one side cannot see the far side. radius defaults to twice
+    the median edge length."""
+    v = np.asarray(mesh.vertices)
+    if radius is None:
+        radius = 2.0 * float(np.median(mesh.edges_unique_length))
+    mirrored = v[mask].copy()
+    mirrored[:, axis] *= -1.0
+    out = np.asarray(mask, dtype=bool).copy()
+    tree = cKDTree(v)
+    for hits in tree.query_ball_point(mirrored, r=radius):
+        out[hits] = True
+    return out
+
+
+def fence_flood(mesh, fence_mask, seed_mask, adj=None):
+    """Surface flood-fill bounded by a fence of vertices.
+
+    The user's outline, transferred onto the mesh, is the fence; seeds
+    are any vertices known to be inside. The flood reaches every vertex
+    connected to a seed without crossing the fence -- including
+    interior shells of hair that no viewpoint can see -- and can never
+    leak past the outline onto protected surface. Returns
+    flood | fence (the fence itself belongs to the replaced region;
+    it is where the feather band lives)."""
+    fence = np.asarray(fence_mask, dtype=bool)
+    seeds = np.asarray(seed_mask, dtype=bool) & ~fence
+    if not seeds.any():
+        raise ValueError("no seeds inside the fence")
+    if adj is None:
+        adj = vertex_adjacency(mesh)
+    open_idx = np.flatnonzero(~fence)
+    sub = adj[open_idx][:, open_idx]
+    _, labels = connected_components(sub, directed=False)
+    seed_labels = np.unique(labels[seeds[open_idx]])
+    flood = np.zeros(len(fence), dtype=bool)
+    flood[open_idx[np.isin(labels, seed_labels)]] = True
+    return flood | fence
+
+
+def stranded_islands(mesh, region_mask, inside_fraction=0.7, adj=None):
+    """Disconnected mesh components (floating scan junk) that lie
+    mostly inside a region -- reachable by no flood, fillable by no
+    solve (nothing anchors them). These are deletion candidates.
+    region_mask: any vertex mask describing the replacement volume."""
+    region = np.asarray(region_mask, dtype=bool)
+    if adj is None:
+        adj = vertex_adjacency(mesh)
+    n_comp, labels = connected_components(adj, directed=False)
+    main = np.argmax(np.bincount(labels))
+    out = np.zeros(len(region), dtype=bool)
+    for comp in range(n_comp):
+        if comp == main:
+            continue
+        members = labels == comp
+        if region[members].mean() >= inside_fraction:
+            out[members] = True
+    return out
