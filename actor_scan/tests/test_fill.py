@@ -45,6 +45,34 @@ class TestFill(unittest.TestCase):
         self.assertFalse(effective.any())
         np.testing.assert_array_equal(filled.vertices, mesh.vertices)
 
+    def test_fullness_domes_the_fill(self):
+        mesh, _, cap = head_with_cap(spiky=True)
+        flat, _ = fill.fill_regions(mesh, cap)
+        domed, _ = fill.fill_regions(mesh, cap, profile="beard")
+        adj = defects.vertex_adjacency(mesh)
+        rim = cap & (np.asarray(
+            adj @ (~cap).astype(float)).reshape(-1) > 0)
+        interior = cap & ~rim
+        lift = (np.linalg.norm(domed.vertices[interior], axis=1) -
+                np.linalg.norm(flat.vertices[interior], axis=1))
+        # Deepest interior approaches the beard preset's 4mm fullness...
+        self.assertGreater(lift.max(), 2.5)
+        # ...while the rim stays put (blend into surrounding skin).
+        rim_shift = np.linalg.norm(domed.vertices[rim] -
+                                   flat.vertices[rim], axis=1)
+        self.assertLess(rim_shift.max(), 0.3)
+
+    def test_explicit_fullness_overrides_profile(self):
+        mesh, _, cap = head_with_cap(spiky=True)
+        a, _ = fill.fill_regions(mesh, cap, profile="beard", fullness=0.0)
+        b, _ = fill.fill_regions(mesh, cap)
+        np.testing.assert_allclose(a.vertices, b.vertices)
+
+    def test_unknown_profile_rejected(self):
+        mesh, _, cap = head_with_cap(spiky=True)
+        with self.assertRaises(ValueError):
+            fill.fill_regions(mesh, cap, profile="mohawk")
+
     def test_bad_inputs(self):
         mesh = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
         mask = np.zeros(len(mesh.vertices), dtype=bool)

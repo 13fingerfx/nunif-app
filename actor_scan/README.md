@@ -28,14 +28,20 @@ Phases 0–4 (image-space half) implemented and tested:
 | `core/overlay.py` | shaped, feathered, landmark-tagged overlays; TPS landmark fitting |
 | `core/synthesis.py` | guided detail synthesis: exemplar micro-texture conditioned on observed data (image-analogies family) |
 | `core/zones.py` | canonical face-zone vocabulary with loose-name resolution, mirrors, hair-prone groups |
-| `core/defects.py` | automated hair/wig-cap/junk detection (spikiness + per-scan skin-color model) |
-| `core/fill.py` | "bald pass": biharmonic re-shaping of marked regions into smooth continuations |
+| `core/selection.py` | manual region selection: polygon on a registered photo -> vertex mask (primary path) |
+| `core/defects.py` | optional assist: auto-suggested hair/wig-cap regions (user always decides) |
+| `core/fill.py` | region re-shaping with profiles: scalp (bald), brow, beard + fullness/taper sliders |
+| `core/measure.py` | 13FingerFX head-measurement chart: calipers + tape loops/arcs, chart compare |
+| `core/eyes.py` | replacement eye forms: preset diameters, plain sphere or sculpted iris/limbus |
+| `core/project.py` | never-erase projects: read-only hashed sources, versioned outputs, step journal |
 
-Not yet built: overlay-onto-bare-mesh (build_plan 4b), library-shaped
-fill (generic ears/scalp exemplars), UV color-texture path (5), GUI (6).
+Not yet built: template-head fill (generic CC0 head as fill target),
+overlay-onto-bare-mesh (build_plan 4b), beard-from-reference-photo,
+UV color-texture path (5), GUI (6).
 
-Pipeline order on a real scan: `mark` -> `fill` (repair first) ->
-`register`/`detail` -> `bake` -> `enhance`/overlays.
+Pipeline order on a real scan: `select` (or `mark` assist) -> `fill`
+(repair first) -> `register`/`detail` -> `bake` -> `enhance`/overlays,
+with `measure` charts before/after to confirm dimensions held.
 
 First real capture: see [`docs/capture_guide.md`](docs/capture_guide.md).
 
@@ -70,9 +76,23 @@ python -m actor_scan register scan.obj corres.json \
 python -m actor_scan bake scan.obj --view pose.json height.npy \
     --scale 0.15 --max-edge 0.4 -o out.stl
 
-# scan repair (before everything else): detect hair/wig-cap, bald-fill it
-python -m actor_scan mark scan.ply -o mask.npy
-python -m actor_scan fill scan.ply mask.npy -o repaired.ply
+# scan repair (before everything else): outline on a registered photo,
+# then fill -- bald scalp, brow ridge, or beard dome
+python -m actor_scan select scan.ply pose.json lasso.json -o mask.npy
+python -m actor_scan fill scan.ply mask.npy --profile beard \
+    --fullness 5.0 -o repaired.ply
+#   (or `mark` to auto-suggest a hair mask as a starting point)
+
+# measurements: compute the chart, compare against the target sheet
+python -m actor_scan measure scan.ply landmarks.json \
+    --against actor_chart.json -o measured.json
+
+# replacement eye forms (scanned eyes read as melted; ~24mm is adult)
+python -m actor_scan eye-form --preset adult --style sculpted -o eye.stl
+
+# never-erase project: sources copied in read-only, outputs versioned
+python -m actor_scan project init job_smith/
+python -m actor_scan project add job_smith/ scan.ply
 
 # zone vocabulary
 python -m actor_scan zones --resolve "under left eye"   # -> l_under_eye

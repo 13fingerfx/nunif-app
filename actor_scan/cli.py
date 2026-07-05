@@ -168,12 +168,92 @@ def cmd_mark(args):
 def cmd_fill(args):
     import trimesh
     from .core import fill
+    from .core.project import guard_overwrite
+    guard_overwrite(args.output, args.mesh, args.mask)
     mesh = trimesh.load(args.mesh, force="mesh")
     mask = np.load(args.mask)
-    filled, effective = fill.fill_regions(mesh, mask, method=args.method)
+    filled, effective = fill.fill_regions(
+        mesh, mask, method=args.method, profile=args.profile,
+        fullness=args.fullness, taper=args.taper)
     filled.export(args.output)
+    shape = args.profile or "flat"
     print(f"saved {args.output}  re-shaped {int(effective.sum())} vertices "
-          f"({args.method})")
+          f"({args.method}, profile {shape})")
+
+
+def cmd_select(args):
+    import trimesh
+    from .core import selection
+    from .core.registration import CameraPose
+    with open(args.polygon) as f:
+        data = json.load(f)
+    polygon = data["polygon"] if isinstance(data, dict) else data
+    mesh = trimesh.load(args.mesh, force="mesh")
+    pose = CameraPose.load(args.pose)
+    mask = selection.polygon_to_mask(mesh, pose, polygon,
+                                     grow_rings=args.grow)
+    np.save(args.output, mask)
+    print(f"saved {args.output}  {int(mask.sum())} of {len(mask)} "
+          "vertices selected")
+
+
+def cmd_measure(args):
+    import trimesh
+    from .core import measure
+    mesh = trimesh.load(args.mesh, force="mesh")
+    with open(args.landmarks) as f:
+        landmarks = json.load(f)
+    chart = measure.compute_chart(mesh, landmarks,
+                                  only=set(args.only) if args.only else None)
+    missing = chart.pop("_missing", [])
+    for mid, value in chart.items():
+        print(f"{measure.BY_ID[mid].label:36s} {value:8.1f}")
+    if missing:
+        print(f"(missing landmarks for: {', '.join(missing)})")
+    if args.against:
+        target = measure.load_chart(args.against)
+        diff = measure.compare_charts(chart, target)
+        print("\nvs target chart:")
+        for mid, d in diff.items():
+            print(f"{measure.BY_ID[mid].label:36s} "
+                  f"target {d['target']:7.1f}  measured "
+                  f"{d['measured']:7.1f}  delta {d['delta']:+6.1f}")
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(chart, f, indent=2)
+        print(f"\nsaved {args.output}")
+
+
+def cmd_eye_form(args):
+    from .core import eyes
+    diameter = (eyes.PRESET_DIAMETERS[args.preset] if args.preset
+                else args.diameter)
+    mesh = eyes.eye_form(diameter=diameter, style=args.style,
+                         iris_diameter=args.iris_diameter,
+                         cornea_bulge=args.cornea_bulge,
+                         iris_recess=args.iris_recess)
+    if args.center:
+        mesh = eyes.place_eye(mesh, args.center, args.aim)
+    mesh.export(args.output)
+    print(f"saved {args.output}  {args.style} eye, diameter "
+          f"{diameter:.1f}mm")
+
+
+def cmd_project(args):
+    from .core.project import Project
+    if args.action == "init":
+        Project.create(args.dir)
+        print(f"project created at {args.dir} (sources/, outputs/, "
+              "journal.json)")
+    elif args.action == "add":
+        proj = Project(args.dir)
+        for path in args.files:
+            dst = proj.add_source(path)
+            print(f"added {path} -> {dst} (read-only)")
+    else:
+        proj = Project(args.dir)
+        for step in proj.journal["steps"]:
+            print(f"{step['step']}: {step['params']}")
 
 
 def cmd_enhance(args):
@@ -299,7 +379,9 @@ def build_parser():
     p.set_defaults(func=cmd_zones)
 
     p = sub.add_parser("mark",
-                       help="detect hair/wig-cap/junk regions to replace")
+                       help="OPTIONAL assist: auto-suggest hair/wig-cap "
+                            "regions (manual `select` is the primary "
+                            "path; the user always decides)")
     p.add_argument("mesh")
     p.add_argument("--rough-threshold", type=float, default=0.15)
     p.add_argument("--color-z", type=float, default=6.0)
@@ -313,14 +395,83 @@ def build_parser():
     p.set_defaults(func=cmd_mark)
 
     p = sub.add_parser("fill",
-                       help="re-shape marked regions smoothly (bald pass)")
+                       help="re-shape selected regions (bald/beard/brow)")
     p.add_argument("mesh")
-    p.add_argument("mask", help="per-vertex mask .npy from `mark`")
+    p.add_argument("mask", help="per-vertex mask .npy from `select`/`mark`")
     p.add_argument("--method", choices=("biharmonic", "laplacian"),
                    default="biharmonic")
+    p.add_argument("--profile", choices=("scalp", "brow", "beard"),
+                   default=None,
+                   help="shaping preset (scalp: skull continuation; "
+                        "brow: gentle ridge; beard: fuller dome)")
+    p.add_argument("--fullness", type=float, default=None,
+                   help="outward offset at region center, mesh units "
+                        "(overrides the profile's value; slider-friendly)")
+    p.add_argument("--taper", type=float, default=None,
+                   help="dome shape: higher = flatter rim, rounder center")
     p.add_argument("-o", "--output", required=True,
-                   help="output mesh (.obj/.ply/.stl)")
+                   help="output mesh (.obj/.ply/.stl) -- inputs are "
+                        "never overwritten")
     p.set_defaults(func=cmd_fill)
+
+    p = sub.add_parser("select",
+                       help="manual region selection: polygon drawn on a "
+                            "registered photo -> vertex mask")
+    p.add_argument("mesh")
+    p.add_argument("pose", help="pose .json from `register`")
+    p.add_argument("polygon",
+                   help='json: [[x,y],...] or {"polygon": [[x,y],...]} '
+                        "in photo pixels")
+    p.add_argument("--grow", type=int, default=0,
+                   help="widen selection this many rings")
+    p.add_argument("-o", "--output", required=True,
+                   help="per-vertex mask .npy")
+    p.set_defaults(func=cmd_select)
+
+    p = sub.add_parser("measure",
+                       help="compute the head-measurement chart "
+                            "(13FingerFX set) from named landmarks")
+    p.add_argument("mesh")
+    p.add_argument("landmarks",
+                   help='json: {"pronasale": [x,y,z], "crown": ...}')
+    p.add_argument("--only", nargs="+", default=None,
+                   help="measurement ids to compute")
+    p.add_argument("--against", default=None,
+                   help="target chart .json to compare with")
+    p.add_argument("-o", "--output", default=None,
+                   help="save the measured chart .json")
+    p.set_defaults(func=cmd_measure)
+
+    p = sub.add_parser("eye-form",
+                       help="generate a replacement eye form")
+    p.add_argument("--diameter", type=float, default=24.0,
+                   help="eyeball diameter in mm (adult ~24)")
+    from .core.eyes import PRESET_DIAMETERS
+    p.add_argument("--preset", choices=sorted(PRESET_DIAMETERS),
+                   default=None,
+                   help="named diameter preset (overrides --diameter)")
+    p.add_argument("--style", choices=("sphere", "sculpted"),
+                   default="sculpted",
+                   help="sphere: plain ball; sculpted: corneal plateau "
+                        "+ dished iris (reads better in print)")
+    p.add_argument("--iris-diameter", type=float, default=11.8)
+    p.add_argument("--cornea-bulge", type=float, default=1.1)
+    p.add_argument("--iris-recess", type=float, default=0.45)
+    p.add_argument("--center", nargs=3, type=float, default=None,
+                   metavar=("X", "Y", "Z"))
+    p.add_argument("--aim", nargs=3, type=float, default=(0.0, 0.0, 1.0),
+                   metavar=("X", "Y", "Z"), help="gaze direction")
+    p.add_argument("-o", "--output", required=True,
+                   help="output mesh (.stl/.obj/.ply)")
+    p.set_defaults(func=cmd_eye_form)
+
+    p = sub.add_parser("project",
+                       help="non-destructive project: originals are "
+                            "copied in read-only and never touched")
+    p.add_argument("action", choices=("init", "add", "log"))
+    p.add_argument("dir")
+    p.add_argument("files", nargs="*", help="files for `add`")
+    p.set_defaults(func=cmd_project)
 
     p = sub.add_parser("enhance",
                        help="guided synthesis: top up a soft detail map "

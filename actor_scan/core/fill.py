@@ -51,15 +51,78 @@ def _drop_unconstrained(mask, adj):
     return out, dropped
 
 
-def fill_regions(mesh, vertex_mask, method="biharmonic"):
+# Per-zone shaping presets: fullness is the outward offset (mesh units,
+# mm for most scanners) at the deepest point of the region; taper shapes
+# the dome (higher = flatter rim, rounder center). These are starting
+# points for character-creator-style sliders, not fixed anatomy.
+PROFILES = {
+    "scalp": {"fullness": 0.0, "taper": 1.0},   # pure skull continuation
+    "brow":  {"fullness": 1.5, "taper": 1.2},   # gentle ridge
+    "beard": {"fullness": 4.0, "taper": 0.8},   # fuller, softer dome
+}
+
+
+def _boundary_distance(mask, adj):
+    """Normalized BFS depth (0 at the region rim, 1 at the deepest
+    interior vertex) for every masked vertex."""
+    depth = np.full(len(mask), -1, dtype=np.int64)
+    outside = ~mask
+    touches_out = np.asarray(
+        adj @ outside.astype(np.float64)).reshape(-1) > 0
+    frontier = np.flatnonzero(mask & touches_out)
+    depth[frontier] = 0
+    ring = 0
+    while len(frontier):
+        reached = np.asarray(
+            adj[frontier].sum(axis=0)).reshape(-1) > 0
+        nxt = np.flatnonzero(mask & reached & (depth < 0))
+        ring += 1
+        depth[nxt] = ring
+        frontier = nxt
+    deepest = depth[mask].max()
+    norm = np.zeros(len(mask))
+    if deepest > 0:
+        norm[mask] = depth[mask] / float(deepest)
+    return norm
+
+
+def shape_fill(mesh, mask, fullness, taper=1.0, adj=None):
+    """Offset a filled region outward along its (smooth) normals with a
+    dome falloff -- the 'fullness' slider. Returns a new Trimesh."""
+    if fullness == 0.0:
+        return mesh.copy()
+    if adj is None:
+        adj = vertex_adjacency(mesh)
+    d = _boundary_distance(mask, adj)
+    s = d * d * (3.0 - 2.0 * d)          # smoothstep dome
+    falloff = np.power(s, taper, where=s > 0, out=np.zeros_like(s))
+    vertices = np.array(mesh.vertices, dtype=np.float64)
+    vertices[mask] += (mesh.vertex_normals[mask] *
+                       (fullness * falloff[mask])[:, None])
+    return trimesh.Trimesh(vertices=vertices, faces=mesh.faces,
+                           process=False)
+
+
+def fill_regions(mesh, vertex_mask, method="biharmonic", profile=None,
+                 fullness=None, taper=None):
     """Re-shape masked vertices as a smooth continuation of the rest.
 
     method: "biharmonic" (slope-continuous, default) or "laplacian"
     (position-continuous only; cheaper, tent-like near the boundary).
+    profile: optional preset name from PROFILES ("scalp"/"brow"/"beard");
+    fullness/taper override the preset's values when given, so the same
+    parameters double as interactive sliders.
     Returns (new Trimesh, effective mask actually filled).
     """
     if method not in ("biharmonic", "laplacian"):
         raise ValueError("method must be 'biharmonic' or 'laplacian'")
+    if profile is not None and profile not in PROFILES:
+        raise ValueError(f"profile must be one of {sorted(PROFILES)}")
+    preset = dict(PROFILES.get(profile, {"fullness": 0.0, "taper": 1.0}))
+    if fullness is not None:
+        preset["fullness"] = fullness
+    if taper is not None:
+        preset["taper"] = taper
     mask = np.asarray(vertex_mask, dtype=bool)
     if mask.shape != (len(mesh.vertices),):
         raise ValueError("mask length must equal the vertex count")
@@ -80,5 +143,9 @@ def fill_regions(mesh, vertex_mask, method="biharmonic"):
     solution = spsolve(a, b)
     vertices = np.array(mesh.vertices, dtype=np.float64)
     vertices[free] = solution
-    return trimesh.Trimesh(vertices=vertices, faces=mesh.faces,
-                           process=False), mask
+    filled = trimesh.Trimesh(vertices=vertices, faces=mesh.faces,
+                             process=False)
+    if preset["fullness"] != 0.0:
+        filled = shape_fill(filled, mask, preset["fullness"],
+                            preset["taper"], adj=adj)
+    return filled, mask

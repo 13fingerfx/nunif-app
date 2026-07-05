@@ -80,6 +80,66 @@ carry wig caps, tied-up hair, and beards that read as noise or junk.
   replacement (generic ear/scalp exemplars, non-rigidly fitted) are the
   planned upgrades and will slot in as additional method= options.
 
+### Phase 2.6 — replacement & sizing toolkit  *(implemented)*
+Policy change from user direction: **manual selection is the primary
+path** — the user outlines what gets replaced; automated detection
+(defects.py) is demoted to an optional assist that only ever suggests.
+
+- `core/selection.py`: the outline tool in CLI form — a closed polygon
+  drawn on a registered photo back-projects to the enclosed, visible
+  vertices (same interaction family as the overlay boundary spline;
+  the GUI later draws the spline directly on the mesh).
+- `core/fill.py` profiles: fill is no longer only "bald". PROFILES
+  presets (scalp = pure skull continuation, brow = gentle ridge,
+  beard = fuller dome) plus `fullness`/`taper` parameters — the same
+  numbers a character-creator slider would drive interactively.
+- `core/measure.py`: the 13FingerFX measurement chart as code. Caliper
+  measurements are straight-line distances between named landmarks;
+  tape measurements are plane-slice loops or arcs (arc side chosen by
+  an "over" hint landmark). compute_chart() runs on the original scan,
+  a repaired version, or a candidate replacement; compare_charts()
+  reports deltas — "the replacement matches our measurements" as an
+  operational check, and the numbers to display live while sizing.
+- `core/eyes.py`: replacement eye forms. Eye diameter is nearly
+  constant across adults (~24 mm; ~19.5 mm at birth), so presets work.
+  style="sphere" is a plain ball; style="sculpted" is the
+  figure-sculptor form — corneal plateau, crisp limbus ring, dished
+  iris — which reads as an eye in monochrome print output instead of
+  the scanned sclera-bulge horror. Placement = center + gaze vector.
+- `core/project.py`: the never-erase rule made mechanical. Projects
+  copy sources in read-only + hashed, all outputs are auto-versioned
+  (_v001, _v002, ...), every step is journaled with its parameters,
+  and guard_overwrite() refuses any output path equal to an input.
+
+**"Is there a system we can adopt?" (character-creator sliders +
+generic head)** — yes, two usable tiers:
+- **MakeHuman**: open-source parametric human (slider "targets" =
+  morph deltas on a base mesh). Code is AGPL but the mesh/target
+  *assets* are CC0 — the base head and the morph-target paradigm are
+  directly adoptable as our generic head and slider system. Blender's
+  official Human Base Meshes bundle (CC0) is an alternative base.
+- **FLAME** (MPI): the statistical head model behind DECA — best
+  auto-*fitting* of a template to a scan/landmarks, but research
+  license, commercial license purchasable. Same treatment as DECA:
+  optional, swappable, never load-bearing.
+- MetaHuman (Epic) and Character Creator (Reallusion) are UX
+  references only — licenses bind them to their ecosystems.
+Planned flow: generic CC0 head ships with the tool, auto-aligned to
+the scan via the measurement landmarks (similarity transform first,
+non-rigid refinement later via probreg); the user outlines the region,
+the aligned generic supplies the fill target instead of a smooth
+continuation (a `method="template"` in fill.py), sliders tweak, and
+commit remeshes into the master form — with the original untouched in
+sources/ per the project rule.
+
+**Beard from a reference photo (design, not yet built)**: register the
+pre-beard photo with the existing PnP flow; the user traces the beard
+outline on the photo (selection.py already turns that into a mesh
+region); the photo's silhouette edge constrains the fill boundary and
+a shading-derived depth hint modulates `fullness` across the region.
+Falls out of machinery that already exists — needs a real bearded/
+pre-beard pair to calibrate against.
+
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
 each vertex through the solved camera → sample the detail height map →
