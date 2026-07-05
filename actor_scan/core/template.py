@@ -70,6 +70,42 @@ def align_template(template, template_landmarks, scan_landmarks):
     return aligned, matrix, rms
 
 
+def anisotropic_align(template, template_landmarks, scan_landmarks):
+    """Tether allowing per-axis proportions: the generic is only a
+    shape/ratio indicator, so beyond rotation+translation+scale it may
+    be stretched independently in width/height/depth to fit the scan's
+    landmark frame. (Point-by-point edge matching happens later, in
+    template_fill's edge_match stage -- this is just the best global
+    fit to start from.)
+    Returns (aligned copy, 4x4 transform, rms, per-axis scales)."""
+    names = sorted(set(template_landmarks) & set(scan_landmarks))
+    if len(names) < 4:
+        raise ValueError("need >= 4 shared landmarks for per-axis scales")
+    src = np.array([template_landmarks[n] for n in names], dtype=np.float64)
+    dst = np.array([scan_landmarks[n] for n in names], dtype=np.float64)
+    base = similarity_transform(src, dst)
+    src_h = (np.hstack([src, np.ones((len(src), 1))]) @ base.T)[:, :3]
+    correction = np.eye(4)
+    scales = np.ones(3)
+    for axis in range(3):
+        a = np.column_stack([src_h[:, axis], np.ones(len(src))])
+        (s, t), *_ = np.linalg.lstsq(a, dst[:, axis], rcond=None)
+        # Landmarks that barely span this axis can't estimate a scale.
+        span = src_h[:, axis].max() - src_h[:, axis].min()
+        if span < 1e-6 or not 0.5 < s < 2.0:
+            s, t = 1.0, 0.0
+        correction[axis, axis] = s
+        correction[axis, 3] = t
+        scales[axis] = s
+    matrix = correction @ base
+    aligned = template.copy()
+    aligned.apply_transform(matrix)
+    homo = np.hstack([src, np.ones((len(src), 1))])
+    residual = (homo @ matrix.T)[:, :3] - dst
+    rms = float(np.sqrt((residual ** 2).sum(axis=1).mean()))
+    return aligned, matrix, rms, scales
+
+
 def refine_alignment(template, trusted_points, iterations=12,
                      samples=20000, trim_percentile=60.0,
                      allow_scale=False, seed=0):
@@ -112,26 +148,79 @@ def refine_alignment(template, trusted_points, iterations=12,
     return aligned, matrix, rms
 
 
-def template_targets(points, template, samples=400000, seed=0):
-    """Nearest template-surface point for each query point (dense
-    surface sampling + KD-tree; fast and accurate to sampling density)."""
+def _edge_matched_targets(mesh, mask, free, targets, adj):
+    """Correct template targets with a per-vertex rim offset field.
+
+    offset = scan - template at every rim vertex (ring 0), harmonically
+    interpolated over the region interior via the mask-subgraph
+    Laplacian. Added to the raw targets, this makes the corrected
+    target coincide with the scan at the boundary regardless of how
+    imperfect the global tether is."""
+    rings = _boundary_rings(mask, adj)
+    rim = mask & (rings == 0)
+    if not rim.any():
+        return targets
+    # Offsets known at rim vertices (their position in the free array).
+    free_pos = {v: i for i, v in enumerate(free)}
+    rim_idx = np.flatnonzero(rim)
+    rim_free = np.array([free_pos[i] for i in rim_idx])
+    offsets_rim = np.asarray(mesh.vertices)[rim_idx] - targets[rim_free]
+
+    interior_idx = np.flatnonzero(mask & (rings > 0))
+    if len(interior_idx) == 0:
+        targets = targets.copy()
+        targets[rim_free] += offsets_rim
+        return targets
+    # Harmonic interpolation on the induced subgraph of the region.
+    nodes = np.concatenate([rim_idx, interior_idx])
+    local = {v: i for i, v in enumerate(nodes)}
+    sub = adj[nodes][:, nodes]
+    deg = np.asarray(sub.sum(axis=1)).reshape(-1)
+    lap = sparse.diags(deg) - sub
+    n_rim = len(rim_idx)
+    a = lap[n_rim:, n_rim:].tocsc()
+    b = -lap[n_rim:, :n_rim] @ offsets_rim
+    offsets_interior = spsolve(a, b)
+    targets = targets.copy()
+    targets[rim_free] += offsets_rim
+    interior_free = np.array([free_pos[i] for i in interior_idx])
+    targets[interior_free] += np.atleast_2d(offsets_interior)
+    return targets
+
+
+def template_targets(points, template, samples=400000, k=6, seed=0):
+    """Template-surface target for each query point: dense surface
+    sampling + KD-tree, averaging the k nearest samples -- a single
+    nearest sample quantizes to the sampling grid and prints through
+    the fill as micro-noise rougher than skin."""
     surface, _ = trimesh.sample.sample_surface(
         template, samples, seed=seed)
     tree = cKDTree(surface)
-    _, idx = tree.query(np.asarray(points, dtype=np.float64))
-    return surface[idx]
+    _, idx = tree.query(np.asarray(points, dtype=np.float64), k=k)
+    if k == 1:
+        return surface[idx]
+    return surface[idx].mean(axis=1)
 
 
 def template_fill(mesh, vertex_mask, template, adherence=1.0,
                   feather_rings=4, locked=None, fullness=0.0, taper=1.0,
-                  samples=400000, delete_stranded=False):
+                  samples=400000, delete_stranded=False, edge_match=True):
     """Replace a region with the template's shape, tethered at the rim.
 
     template must already be aligned into the scan's space (use
-    align_template). adherence >= 0: 0 gives plain biharmonic; ~1
-    balances smoothness against the template; larger hugs the template.
-    feather_rings: rim band where template influence fades to zero so
-    the drop-in stays glued to the scan at the boundary.
+    align_template / anisotropic_align). adherence >= 0: 0 gives plain
+    biharmonic; ~1 balances smoothness against the template; larger
+    hugs the template. feather_rings: rim band where template
+    influence ramps in from the boundary.
+
+    edge_match (default True): point-by-point boundary conformance.
+    The scan-to-template offset is measured at every rim vertex (where
+    the scan is sacrosanct) and interpolated harmonically across the
+    region; targets become template + offset field. The drop-in
+    therefore meets the scan EXACTLY at the rim -- no global transform
+    of the generic can guarantee that, per-vertex warping can -- while
+    the interior still carries the generic's shape, corrected toward
+    the subject's real proportions near every edge.
     Returns (new Trimesh, effective mask actually filled).
     """
     if adherence < 0:
@@ -165,6 +254,8 @@ def template_fill(mesh, vertex_mask, template, adherence=1.0,
 
     targets = template_targets(mesh.vertices[free], template,
                                samples=samples)
+    if edge_match:
+        targets = _edge_matched_targets(mesh, mask, free, targets, adj)
     rings = _boundary_rings(mask, adj)[free]
     if feather_rings > 0:
         t = np.clip(rings / float(feather_rings), 0.0, 1.0)

@@ -197,9 +197,42 @@ height) with the female generic at adherence 2.0 — 4.7 s solve, auto-
 tether at x105 scale with 1.16 cm landmark rms from crude auto-picked
 features (user-placed landmarks will beat that).
 
+**Round 2 (user critique of the first result — steps at junctions,
+carried-over texture, narrowed flanks, no mid-process measurements):**
+- `anisotropic_align`: the generic is only a shape/ratio indicator, so
+  the tether may stretch it independently in width/height/depth to fit
+  the scan's landmark frame (per-axis least squares on top of the
+  similarity fit). Scan dimensions outside the replaced region remain
+  sacrosanct by construction.
+- `edge_match` (default on) in template_fill: point-by-point boundary
+  conformance. Scan-to-template offsets are measured at every rim
+  vertex and harmonically interpolated across the region; targets
+  become template + offset field, so the drop-in meets the scan
+  EXACTLY at the rim no matter how imperfect the global tether is —
+  no global transform can guarantee that, per-vertex warping can.
+  Verified: a deliberately mis-tethered template produces max rim
+  step 1.5mm on the real scan (visible ledges before the fix).
+- `template_targets` averages k nearest surface samples — a single
+  nearest sample quantizes to the sampling grid and printed through
+  as micro-noise rougher than skin (caught by acceptance metrics).
+- Acceptance checks now run before any result is presented: max rim
+  step, zero unmoved vertices inside the region, interior roughness
+  vs skin baseline, and before/after measurement-chart deltas
+  (tragus-to-tragus must not change; ear-to-ear over crown reports
+  the removed hair volume). Measurement readout printed per fill =
+  the CLI stand-in for live slider feedback.
+- Selection lesson (three failed rounds' worth): hand-transcribing a
+  drawn outline loses the silhouette edge; the user's stroke is now
+  extracted directly from their annotated image and registered onto
+  the render projection. In the GUI this is moot (the spline lives on
+  the mesh), but any import-an-annotation path must do it this way.
+
 Still open in this phase: commit-step remeshing into master topology,
 color-coded hair regions on the generics (user may supply), per-axis
-width/depth sliders, and landmark auto-suggestion.
+width/depth sliders as interactive controls, and landmark
+auto-suggestion (the crown landmark sits on cap+hair, so skull height
+currently uses an estimated 1.2cm cap allowance — the user's real
+chart value replaces that estimate).
 
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
