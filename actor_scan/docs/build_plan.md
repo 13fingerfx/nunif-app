@@ -140,6 +140,38 @@ a shading-derived depth hint modulates `fullness` across the region.
 Falls out of machinery that already exists — needs a real bearded/
 pre-beard pair to calibrate against.
 
+### First real-scan calibration (scan 049, wig cap + bun)
+Run against a professional-rig scan (400K faces, OBJ, ~36 cm bust,
+i.e. **cm units** — Miraco exports are mm, so units must never be
+assumed; the CLI now prints extent + a unit guess on every mesh load).
+Findings, in order of importance:
+
+1. **OBJ scans arrive un-welded** — per-corner UV/normal indices split
+   199,877 real vertices into 445,561 disconnected corners, silently
+   breaking every adjacency-based operation. The CLI loader now welds
+   on load (fill/bake/selection all need the connected graph). This
+   was the only real bug the calibration found.
+2. **Fill scales**: biharmonic solve of a 76K-vertex cranium selection
+   in 6.5 s on the 200K-vertex scan. Interactive-enough for the
+   commit-step workflow; sliders can operate on a decimated preview.
+3. **Artifact removal works**: the wig-cap ring artifacts and the hair
+   bun are completely eliminated, boundary blends cleanly into the
+   face/neck rim.
+4. **Shape verdict — the motivating result**: with the entire cranium
+   masked, slope-continuous extrapolation from the forehead/nape rim
+   produces a flat-topped "conehead" — geometrically smooth,
+   anatomically wrong. Biharmonic fill is the right tool at *patch*
+   scale (beard, brow, small dropouts) and the wrong prior for
+   full-cranium replacement. This is exactly the case for the
+   template-head fill (`method="template"`, generic CC0 head aligned
+   via measurement landmarks) — now the top build priority.
+5. **Auto-detection verdict**: point-wise roughness does light up the
+   cap's ring artifacts but does not globally separate cap from skin
+   on real data (the cap fabric is smooth; real skin carries genuine
+   micro-noise at the scan's 1.15 mm edge length). Confirms the
+   product decision that manual outlining is the primary path;
+   `mark` stays an assist at best.
+
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
 each vertex through the solved camera → sample the detail height map →

@@ -80,7 +80,7 @@ def cmd_register(args):
     pts2 = np.asarray(corres["points2d"], dtype=np.float64)
     # The mesh is loaded purely to sanity-check that the 3D points
     # actually lie on/near the scan.
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     _, dist, _ = mesh.nearest.on_surface(pts3)
     if dist.max() > 0.05 * float(mesh.scale):
         print(f"warning: a 3D point is {dist.max():.2f} units off the "
@@ -96,7 +96,7 @@ def cmd_bake(args):
     import trimesh
     from .core import bake
     from .core.registration import CameraPose
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     views = []
     for pose_path, height_path in args.view:
         views.append((CameraPose.load(pose_path), np.load(height_path)))
@@ -130,6 +130,33 @@ def cmd_zones(args):
         print(f"{z.id:18s} {z.label}{hair}")
 
 
+def _load_mesh(path):
+    """Load a scan welded: OBJ exports split vertices at every UV/normal
+    seam (a 200K-vertex scan arrives as 445K disconnected corners),
+    which breaks adjacency-based work -- fill, roughness, selection
+    growth, and displacement all need the connected graph. Also prints
+    the extent so unit mix-ups (cm vs mm scans) surface immediately."""
+    import trimesh
+    mesh = trimesh.load(path, force="mesh", process=False)
+    before = len(mesh.vertices)
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
+    if len(mesh.vertices) != before:
+        print(f"welded {before} -> {len(mesh.vertices)} vertices "
+              "(UV/normal seams)")
+    extent = mesh.bounds[1] - mesh.bounds[0]
+    span = float(extent.max())
+    if 100.0 <= span <= 1000.0:
+        unit = "mm"
+    elif 10.0 <= span < 100.0:
+        unit = "cm"
+    else:
+        unit = "unknown"
+    print(f"extent {extent.round(1)} (largest span {span:.0f} -> "
+          f"units look like {unit}; fullness/measure values are in "
+          "mesh units)")
+    return mesh
+
+
 def _vertex_colors(mesh):
     visual = getattr(mesh, "visual", None)
     if visual is None:
@@ -149,7 +176,7 @@ def _vertex_colors(mesh):
 def cmd_mark(args):
     import trimesh
     from .core import defects
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     colors = None if args.no_color else _vertex_colors(mesh)
     if colors is None and not args.no_color:
         print("warning: no vertex colors found -- geometry-only pass; "
@@ -170,7 +197,7 @@ def cmd_fill(args):
     from .core import fill
     from .core.project import guard_overwrite
     guard_overwrite(args.output, args.mesh, args.mask)
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     mask = np.load(args.mask)
     filled, effective = fill.fill_regions(
         mesh, mask, method=args.method, profile=args.profile,
@@ -188,7 +215,7 @@ def cmd_select(args):
     with open(args.polygon) as f:
         data = json.load(f)
     polygon = data["polygon"] if isinstance(data, dict) else data
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     pose = CameraPose.load(args.pose)
     mask = selection.polygon_to_mask(mesh, pose, polygon,
                                      grow_rings=args.grow)
@@ -200,7 +227,7 @@ def cmd_select(args):
 def cmd_measure(args):
     import trimesh
     from .core import measure
-    mesh = trimesh.load(args.mesh, force="mesh")
+    mesh = _load_mesh(args.mesh)
     with open(args.landmarks) as f:
         landmarks = json.load(f)
     chart = measure.compute_chart(mesh, landmarks,
