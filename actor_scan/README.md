@@ -27,9 +27,15 @@ Phases 0–4 (image-space half) implemented and tested:
 | `core/bake.py` | subdivide -> project -> displace -> STL/OBJ/PLY (never through the UV atlas) |
 | `core/overlay.py` | shaped, feathered, landmark-tagged overlays; TPS landmark fitting |
 | `core/synthesis.py` | guided detail synthesis: exemplar micro-texture conditioned on observed data (image-analogies family) |
+| `core/zones.py` | canonical face-zone vocabulary with loose-name resolution, mirrors, hair-prone groups |
+| `core/defects.py` | automated hair/wig-cap/junk detection (spikiness + per-scan skin-color model) |
+| `core/fill.py` | "bald pass": biharmonic re-shaping of marked regions into smooth continuations |
 
-Not yet built: overlay-onto-bare-mesh (build_plan 4b), UV color-texture
-path (5), GUI (6).
+Not yet built: overlay-onto-bare-mesh (build_plan 4b), library-shaped
+fill (generic ears/scalp exemplars), UV color-texture path (5), GUI (6).
+
+Pipeline order on a real scan: `mark` -> `fill` (repair first) ->
+`register`/`detail` -> `bake` -> `enhance`/overlays.
 
 First real capture: see [`docs/capture_guide.md`](docs/capture_guide.md).
 
@@ -63,6 +69,18 @@ python -m actor_scan register scan.obj corres.json \
 # 5. bake detail into geometry and export for printing
 python -m actor_scan bake scan.obj --view pose.json height.npy \
     --scale 0.15 --max-edge 0.4 -o out.stl
+
+# scan repair (before everything else): detect hair/wig-cap, bald-fill it
+python -m actor_scan mark scan.ply -o mask.npy
+python -m actor_scan fill scan.ply mask.npy -o repaired.ply
+
+# zone vocabulary
+python -m actor_scan zones --resolve "under left eye"   # -> l_under_eye
+python -m actor_scan zones --hair beard
+
+# guided synthesis: top up a soft detail map from a real exemplar
+python -m actor_scan enhance height.npy --exemplar l_cheek_bank.npy \
+    -o height_enhanced.npy
 
 # overlays: cut a shaped region, refit it elsewhere via landmarks
 python -m actor_scan overlay-extract height.npy region.json -o l_cheek.aso.npz

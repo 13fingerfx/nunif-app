@@ -110,6 +110,72 @@ def cmd_bake(args):
           f"{covered:.1f}% received detail")
 
 
+def cmd_zones(args):
+    from .core import zones
+    if args.resolve:
+        zid = zones.resolve(args.resolve)
+        z = zones.ZONES[zid]
+        extra = f", mirror {z.mirror}" if z.mirror else ""
+        hair = f", hair:{z.hair}" if z.hair else ""
+        print(f"{args.resolve!r} -> {zid}  ({z.label}; group {z.group}"
+              f"{extra}{hair})")
+        return
+    listing = zones.ZONES.values()
+    if args.group:
+        listing = [z for z in listing if z.group == args.group]
+    if args.hair:
+        listing = [z for z in listing if z.hair == args.hair]
+    for z in listing:
+        hair = f"  [hair:{z.hair}]" if z.hair else ""
+        print(f"{z.id:18s} {z.label}{hair}")
+
+
+def _vertex_colors(mesh):
+    visual = getattr(mesh, "visual", None)
+    if visual is None:
+        return None
+    if getattr(visual, "kind", None) == "vertex":
+        colors = np.asarray(visual.vertex_colors)
+    else:
+        try:
+            colors = np.asarray(visual.to_color().vertex_colors)
+        except Exception:
+            return None
+    if colors.ndim != 2 or len(colors) != len(mesh.vertices):
+        return None
+    return colors[:, :3]
+
+
+def cmd_mark(args):
+    import trimesh
+    from .core import defects
+    mesh = trimesh.load(args.mesh, force="mesh")
+    colors = None if args.no_color else _vertex_colors(mesh)
+    if colors is None and not args.no_color:
+        print("warning: no vertex colors found -- geometry-only pass; "
+              "smooth wig caps may be missed")
+    mask, diag = defects.estimate_replace_mask(
+        mesh, colors, rough_threshold=args.rough_threshold,
+        color_z=args.color_z, min_component=args.min_component,
+        grow_rings=args.grow)
+    np.save(args.output, mask)
+    print(f"saved {args.output}  {mask.sum()} of {len(mask)} vertices "
+          f"marked ({diag['final_fraction'] * 100:.1f}%; roughness "
+          f"{diag['rough_fraction'] * 100:.1f}%, color "
+          f"{diag['color_fraction'] * 100:.1f}%)")
+
+
+def cmd_fill(args):
+    import trimesh
+    from .core import fill
+    mesh = trimesh.load(args.mesh, force="mesh")
+    mask = np.load(args.mask)
+    filled, effective = fill.fill_regions(mesh, mask, method=args.method)
+    filled.export(args.output)
+    print(f"saved {args.output}  re-shaped {int(effective.sum())} vertices "
+          f"({args.method})")
+
+
 def cmd_enhance(args):
     from .core import synthesis
     guide = np.load(args.height)
@@ -131,9 +197,18 @@ def cmd_overlay_extract(args):
     height = np.load(args.height)
     with open(args.region) as f:
         region = json.load(f)
+    from .core import zones
+    tag = region["region_tag"]
+    try:
+        canonical = zones.resolve(tag)
+        if canonical != tag:
+            print(f"zone {tag!r} -> canonical {canonical!r}")
+        tag = canonical
+    except KeyError as e:
+        print(f"note: {e.args[0]} -- keeping custom tag {tag!r}")
     ov = overlay.extract_overlay(
         height, region["polygon"], region["landmarks"],
-        region["region_tag"], region.get("name", region["region_tag"]),
+        tag, region.get("name", tag),
         feather_px=args.feather, px_per_mm=region.get("px_per_mm"))
     ov.save(args.output)
     print(f"saved {args.output}  tag={ov.region_tag} "
@@ -214,6 +289,38 @@ def build_parser():
     p.add_argument("-o", "--output", required=True,
                    help="output mesh (.stl/.obj/.ply)")
     p.set_defaults(func=cmd_bake)
+
+    p = sub.add_parser("zones", help="list/resolve face zone names")
+    p.add_argument("--resolve", metavar="NAME",
+                   help='e.g. "under left eye" -> l_under_eye')
+    p.add_argument("--group", help="filter by group (face, eye, ...)")
+    p.add_argument("--hair", choices=("scalp", "beard"),
+                   help="filter to hair-prone zones")
+    p.set_defaults(func=cmd_zones)
+
+    p = sub.add_parser("mark",
+                       help="detect hair/wig-cap/junk regions to replace")
+    p.add_argument("mesh")
+    p.add_argument("--rough-threshold", type=float, default=0.15)
+    p.add_argument("--color-z", type=float, default=6.0)
+    p.add_argument("--min-component", type=int, default=50)
+    p.add_argument("--grow", type=int, default=2,
+                   help="grow the mask this many rings")
+    p.add_argument("--no-color", action="store_true",
+                   help="geometry-only pass")
+    p.add_argument("-o", "--output", required=True,
+                   help="per-vertex boolean mask .npy")
+    p.set_defaults(func=cmd_mark)
+
+    p = sub.add_parser("fill",
+                       help="re-shape marked regions smoothly (bald pass)")
+    p.add_argument("mesh")
+    p.add_argument("mask", help="per-vertex mask .npy from `mark`")
+    p.add_argument("--method", choices=("biharmonic", "laplacian"),
+                   default="biharmonic")
+    p.add_argument("-o", "--output", required=True,
+                   help="output mesh (.obj/.ply/.stl)")
+    p.set_defaults(func=cmd_fill)
 
     p = sub.add_parser("enhance",
                        help="guided synthesis: top up a soft detail map "

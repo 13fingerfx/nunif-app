@@ -58,6 +58,28 @@ reprojection-error reporting so the user can see fit quality. Automation
 (COLMAP, DINO-feature matching) is a later optimization, not v1 — manual
 correspondences are deterministic and testable.
 
+### Phase 2.5 — scan repair: zones, hair detection, bald fill  *(implemented)*
+Runs on the raw scan, before any detail/texture work — raw head scans
+carry wig caps, tied-up hair, and beards that read as noise or junk.
+- `core/zones.py`: canonical face/head zone registry (l_cheek,
+  r_under_eye, under_chin, ...) with forgiving name resolution ("under
+  left eye" -> l_under_eye), mirror pairs, groups, and hair-prone
+  markers (scalp/beard). One shared vocabulary for overlay tags, repair,
+  and future marketplace packs; custom tags stay allowed.
+- `core/defects.py`: automated replace-region estimator, two classical
+  signals — spikiness (vertex displacement from the neighbors' centroid
+  relative to edge length; normal-based measures self-cancel on noise
+  and were rejected after testing) and robust color distance from a
+  skin model fitted to the scan's own smooth regions (per-scan fit, so
+  any complexion works and wig caps with clean geometry still get
+  caught). Speckle-filtered, ring-grown.
+- `core/fill.py`: the "bald pass" — masked vertices are re-solved as a
+  biharmonic continuation of the surrounding surface (slope-continuous,
+  so a filled scalp reads as skull, not soap film). Moves existing
+  vertices only; true topological hole closure and library-shaped
+  replacement (generic ear/scalp exemplars, non-rigidly fitted) are the
+  planned upgrades and will slot in as additional method= options.
+
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
 each vertex through the solved camera → sample the detail height map →
