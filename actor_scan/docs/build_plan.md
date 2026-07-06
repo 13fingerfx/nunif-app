@@ -227,12 +227,22 @@ carried-over texture, narrowed flanks, no mid-process measurements):**
   the render projection. In the GUI this is moot (the spline lives on
   the mesh), but any import-an-annotation path must do it this way.
 
-Still open in this phase: commit-step remeshing into master topology,
+**Landmark doctrine (user ruling):** landmarks must NEVER sit on
+removable material — hair, wig cap, debris. Tether from skin only
+(ears, nose, chin, brow); dimensions no skin landmark spans (skull
+height under hair) are supplied by the generic's own ratios — that is
+precisely the generic's job as a "shape and dimension-ratio
+indicator." The earlier estimated cap allowance is obsolete: cap
+fabric is 2–3 mm and gets removed with the hair anyway. Verified on
+scan 049: skin-only tether yields chin-to-crown 25.4 cm (raw
+cap-inflated surface 25.2 cm) with no fudge constants. Where chart
+values DO exist for a subject, they override ratios as constraints.
+
+Still open in this phase: commit-step remeshing into master topology
+(watertight commit is done; retopology to clean quads is not),
 color-coded hair regions on the generics (user may supply), per-axis
 width/depth sliders as interactive controls, and landmark
-auto-suggestion (the crown landmark sits on cap+hair, so skull height
-currently uses an estimated 1.2cm cap allowance — the user's real
-chart value replaces that estimate).
+auto-suggestion.
 
 ### Phase 3 — bake to geometry  *(this commit)*
 `core/bake.py`: subdivide the scan mesh to target edge length → project
