@@ -34,6 +34,8 @@ Phases 0–4 (image-space half) implemented and tested:
 | `core/measure.py` | 13FingerFX head-measurement chart: calipers + tape loops/arcs, chart compare |
 | `core/eyes.py` | replacement eye forms: preset diameters, plain sphere or sculpted iris/limbus |
 | `core/project.py` | never-erase projects: read-only hashed sources, versioned outputs, step journal |
+| `core/template.py` | template-head fill: anisotropic tether, per-vertex edge matching, screened solve |
+| `core/commit.py` | finalize: non-manifold repair, boundary capping, watertight validation, volume report |
 
 Not yet built: template-head fill (generic CC0 head as fill target),
 overlay-onto-bare-mesh (build_plan 4b), beard-from-reference-photo,
@@ -89,6 +91,9 @@ python -m actor_scan measure scan.ply landmarks.json \
 
 # replacement eye forms (scanned eyes read as melted; ~24mm is adult)
 python -m actor_scan eye-form --preset adult --style sculpted -o eye.stl
+
+# finalize for print: watertight solid + volume report
+python -m actor_scan commit repaired.ply -o print_ready.stl
 
 # never-erase project: sources copied in read-only, outputs versioned
 python -m actor_scan project init job_smith/

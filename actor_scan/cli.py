@@ -301,6 +301,29 @@ def cmd_project(args):
             print(f"{step['step']}: {step['params']}")
 
 
+def cmd_commit(args):
+    from .core import commit
+    from .core.project import guard_overwrite
+    guard_overwrite(args.output, args.mesh)
+    mesh = _load_mesh(args.mesh)
+    solid, report = commit.commit(mesh, keep=args.keep,
+                                  cap=not args.no_cap)
+    solid.export(args.output)
+    ext = report["extent"]
+    print(f"saved {args.output}")
+    print(f"  watertight: {report['watertight']}  winding ok: "
+          f"{report['winding_consistent']}")
+    print(f"  {report['faces']} faces, {report['vertices']} vertices; "
+          f"capped {report.get('loops_capped', 0)} boundary loop(s), "
+          f"dropped {report['components_dropped']} debris component(s)")
+    print(f"  extent {ext[0]:.1f} x {ext[1]:.1f} x {ext[2]:.1f} "
+          "mesh units")
+    if "volume" in report:
+        print(f"  volume {report['volume']:.1f} cubic mesh units")
+    if not report["watertight"]:
+        sys.exit("NOT watertight -- do not print; inspect the loops")
+
+
 def cmd_enhance(args):
     from .core import synthesis
     guide = np.load(args.height)
@@ -537,6 +560,19 @@ def build_parser():
     p.add_argument("dir")
     p.add_argument("files", nargs="*", help="files for `add`")
     p.set_defaults(func=cmd_project)
+
+    p = sub.add_parser("commit",
+                       help="finalize a repaired mesh into a watertight "
+                            "print-ready solid (caps open boundaries, "
+                            "drops debris, verifies volume)")
+    p.add_argument("mesh")
+    p.add_argument("--keep", choices=("largest", "all"), default="largest",
+                   help="connected components to keep")
+    p.add_argument("--no-cap", action="store_true",
+                   help="skip boundary capping (inspection only)")
+    p.add_argument("-o", "--output", required=True,
+                   help="output solid (.stl/.obj/.ply)")
+    p.set_defaults(func=cmd_commit)
 
     p = sub.add_parser("enhance",
                        help="guided synthesis: top up a soft detail map "
