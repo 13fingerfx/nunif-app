@@ -1,0 +1,7 @@
+numpy
+scipy
+opencv-python-headless
+trimesh
+networkx
+rtree
+pillow
