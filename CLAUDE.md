@@ -20,3 +20,13 @@ field accurate — it's what the star-sync Routine matches new stars against.
 
 Don't sync trivial/in-flight changes — only durable facts worth another
 session (or the star-matcher) knowing about.
+
+## Workshop context
+
+For machine specs, network addresses, and what's running where,
+consult `13fingerfx/Workshop_data` (`MACHINES.md` + `SERVICES.md`) before
+assuming or asking — pull the latest copy first. If you learn something
+new and durable about the workshop's tech that isn't recorded there yet,
+add it (never secrets, never passwords/keys/tokens) — see that repo's
+`AGENTS.md` for the exact mechanism.
+
